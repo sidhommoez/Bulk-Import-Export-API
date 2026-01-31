@@ -1,28 +1,31 @@
 # Bulk Import/Export API
 
-A production-ready NestJS 11 application for bulk data import and export operations. This system handles up to 1,000,000 records per job with streaming support, robust validation, and comprehensive error reporting.
+A production-ready NestJS 11 application for bulk data import and export operations. This system handles up to 1,000,000 records per job with streaming support, robust validation, comprehensive error reporting, and **multi-node scalability**.
 
 ## 📋 Table of Contents
 
-- [Features](#features)
-- [Architecture](#architecture)
-- [Prerequisites](#prerequisites)
-- [Quick Start](#quick-start)
-- [Configuration](#configuration)
-- [Authentication](#authentication)
-- [API Documentation](#api-documentation)
-- [Data Schemas](#data-schemas)
-- [Validation Rules](#validation-rules)
-- [Usage Examples](#usage-examples)
-- [Testing](#testing)
-- [Performance](#performance)
-- [Troubleshooting](#troubleshooting)
+- [Features](#-features)
+- [Architecture](#-architecture)
+- [Prerequisites](#-prerequisites)
+- [Quick Start](#-quick-start)
+- [Configuration](#️-configuration)
+- [Authentication](#-authentication)
+- [API Documentation](#-api-documentation)
+- [Data Schemas](#-data-schemas)
+- [Validation Rules](#-validation-rules)
+- [Usage Examples](#-usage-examples)
+- [Testing](#-testing)
+- [Multi-Node Scalability](#-multi-node-scalability)
+- [Performance](#-performance)
+- [Project Structure](#-project-structure)
+- [Development](#️-development)
 
 ## ✨ Features
 
 - **Bulk Import**: Upload files (JSON, NDJSON, CSV) or provide remote URLs for async processing
 - **Bulk Export**: Stream data directly or create background export jobs with filters
 - **Async Processing**: Long-running operations processed via BullMQ with Redis
+- **Multi-Node Scalability**: Distributed locking ensures safe operation across multiple instances
 - **API Key Authentication**: Secure endpoints with multiple API keys support
 - **Idempotency**: Prevent duplicate imports using the `Idempotency-Key` header
 - **Stream Processing**: O(1) memory usage for large files (up to 1M records)
@@ -30,6 +33,7 @@ A production-ready NestJS 11 application for bulk data import and export operati
 - **Upsert Support**: Import same file multiple times without duplicating data
 - **Observability**: Structured logging with metrics (rows/sec, error rate, duration)
 - **S3 Storage**: Files stored in S3 (LocalStack for local development)
+- **Stale Job Recovery**: Automatic cleanup of abandoned jobs from crashed nodes
 
 ## 🏗 Architecture
 
@@ -38,7 +42,12 @@ A production-ready NestJS 11 application for bulk data import and export operati
 │   REST API      │────▶│   BullMQ Queue  │────▶│   Processors    │
 │   (NestJS 11)   │     │   (Redis)       │     │   (Background)  │
 └─────────────────┘     └─────────────────┘     └─────────────────┘
-         │                                               │
+         │                      │                        │
+         │                      ▼                        │
+         │              ┌─────────────────┐              │
+         │              │ Distributed Lock│              │
+         │              │    (Redis)      │              │
+         │              └─────────────────┘              │
          ▼                                               ▼
 ┌─────────────────┐                           ┌─────────────────┐
 │   PostgreSQL    │◀──────────────────────────│   S3 Storage    │
@@ -48,7 +57,7 @@ A production-ready NestJS 11 application for bulk data import and export operati
 
 ## 📦 Prerequisites
 
-- **Node.js** >= 18.0.0
+- **Node.js** >= 20.0.0
 - **Docker** and **Docker Compose**
 - **npm** or **yarn**
 
@@ -93,21 +102,19 @@ npm run migration:run
 |---------|-----|-------------|-------------|
 | **API** | http://localhost:3000/v1 | API Key (if configured) | REST API endpoints |
 | **Swagger Docs** | http://localhost:3000/api/docs | - | Interactive API documentation |
-| **pgAdmin** | http://localhost:5050 | admin@admin.com / admin | PostgreSQL database viewer |
+| **pgAdmin** | http://localhost:5050 | admin@admin.com / admin | PostgreSQL database viewer (auto-configured) |
 | **Bull Board** | http://localhost:3000/admin/queues | - | Background job queue monitoring |
 | **S3 Manager** | http://localhost:8080 | - | Browse S3/LocalStack files |
 | **Redis Commander** | http://localhost:8081 | (run with `--profile debug`) | Redis data viewer |
 
-### pgAdmin Setup
+### pgAdmin (Auto-Configured)
+
+pgAdmin comes pre-configured with the PostgreSQL connection:
 
 1. Open http://localhost:5050
 2. Login with `admin@admin.com` / `admin`
-3. Add new server:
-   - **Host**: `postgres`
-   - **Port**: `5432`
-   - **Username**: `postgres`
-   - **Password**: `postgres`
-   - **Database**: `bulk_import_export`
+3. The server "**Bulk Import Export DB**" is already configured in the left sidebar
+4. Just click to connect - no password prompt needed!
 
 ### Alternative: Run Without Docker
 
@@ -122,23 +129,19 @@ npm run start:dev
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `NODE_ENV` | Environment (development/production/test) | `development` |
 | `PORT` | Application port | `3000` |
-| `API_PREFIX` | API URL prefix | `v1` |
-| `API_KEY` | API key(s) for authentication (comma-separated) | `` (disabled) |
-| `SWAGGER_ENABLED` | Enable Swagger documentation | `true` (non-prod) |
+| `API_PREFIX` | API route prefix | `v1` |
+| `API_KEY` | Comma-separated API keys | `` (disabled) |
 | `DATABASE_HOST` | PostgreSQL host | `localhost` |
 | `DATABASE_PORT` | PostgreSQL port | `5432` |
-| `DATABASE_USERNAME` | Database username | `postgres` |
-| `DATABASE_PASSWORD` | Database password | `postgres` |
-| `DATABASE_NAME` | Database name | `bulk_import_export` |
+| `DATABASE_USERNAME` | PostgreSQL username | `postgres` |
+| `DATABASE_PASSWORD` | PostgreSQL password | `postgres` |
+| `DATABASE_NAME` | PostgreSQL database | `bulk_import_export` |
 | `REDIS_HOST` | Redis host | `localhost` |
 | `REDIS_PORT` | Redis port | `6379` |
 | `AWS_REGION` | AWS region | `us-east-1` |
-| `AWS_ACCESS_KEY_ID` | AWS access key | `test` |
-| `AWS_SECRET_ACCESS_KEY` | AWS secret key | `test` |
 | `AWS_S3_BUCKET` | S3 bucket name | `bulk-import-export` |
-| `AWS_S3_ENDPOINT` | S3 endpoint (LocalStack) | `http://localhost:4566` |
+| `AWS_S3_ENDPOINT` | S3 endpoint (for LocalStack) | `` |
 | `JOB_BATCH_SIZE` | Records per batch | `1000` |
 | `JOB_CONCURRENCY` | Concurrent job processors | `2` |
 
@@ -146,39 +149,40 @@ npm run start:dev
 
 ### API Key Authentication
 
-Import and export endpoints are protected with API key authentication.
+The API uses API key authentication via the `X-API-Key` header.
 
 #### Configuration
 
-```bash
-# Single API key
-API_KEY=my-secret-key
+Set one or more API keys in your environment:
 
-# Multiple API keys (comma-separated)
-API_KEY=key1-for-admin,key2-for-app,key3-for-partner
+```bash
+# Single key
+API_KEY=your-secret-key
+
+# Multiple keys (comma-separated)
+API_KEY=key1-secret,key2-secret,key3-secret
 ```
 
 #### Usage
 
-Include the `X-API-Key` header in your requests:
+Include the API key in your requests:
 
 ```bash
-curl -X POST http://localhost:3000/v1/imports \
-  -H "X-API-Key: my-secret-key" \
-  -F "resourceType=users" \
-  -F "file=@users.csv"
+curl -X GET http://localhost:3000/v1/imports/123 \
+  -H "X-API-Key: your-secret-key"
 ```
 
 #### Development Mode
 
-If `API_KEY` is not set or empty, authentication is **disabled** (useful for local development).
+Leave `API_KEY` empty to disable authentication:
+
+```bash
+API_KEY=
+```
 
 #### Swagger UI
 
-1. Click the **Authorize** button (🔓) in Swagger UI
-2. Enter your API key
-3. Click **Authorize**
-4. All requests will include the `X-API-Key` header
+Click the "Authorize" button in Swagger UI and enter your API key.
 
 ## 📚 API Documentation
 
@@ -186,34 +190,31 @@ If `API_KEY` is not set or empty, authentication is **disabled** (useful for loc
 
 #### Create Import Job
 
-```http
-POST /v1/imports
-Content-Type: multipart/form-data
-X-API-Key: your-api-key
-Idempotency-Key: unique-import-key-123 (optional)
+**POST** `/v1/imports`
 
-resourceType: users|articles|comments
-file: <file>
-format: json|ndjson|csv (optional, auto-detected)
+Upload a file or provide a URL to import data.
+
+**Form Data (File Upload):**
+```bash
+curl -X POST http://localhost:3000/v1/imports \
+  -H "X-API-Key: your-key" \
+  -F "file=@users.ndjson" \
+  -F "resourceType=users"
 ```
 
-**Or with remote URL:**
-
-```http
-POST /v1/imports
-Content-Type: application/json
-X-API-Key: your-api-key
-Idempotency-Key: unique-import-key-123 (optional)
-
-{
-  "resourceType": "users",
-  "fileUrl": "https://example.com/data/users.ndjson",
-  "format": "ndjson"
-}
+**JSON Body (URL Import):**
+```bash
+curl -X POST http://localhost:3000/v1/imports \
+  -H "X-API-Key: your-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "resourceType": "users",
+    "fileUrl": "https://example.com/users.ndjson",
+    "format": "ndjson"
+  }'
 ```
 
-**Response (202 Accepted):**
-
+**Response:**
 ```json
 {
   "id": "550e8400-e29b-41d4-a716-446655440000",
@@ -224,20 +225,21 @@ Idempotency-Key: unique-import-key-123 (optional)
   "successfulRows": 0,
   "failedRows": 0,
   "skippedRows": 0,
-  "createdAt": "2024-01-15T10:30:00.000Z",
-  "updatedAt": "2024-01-15T10:30:00.000Z"
+  "createdAt": "2024-01-15T10:30:00Z",
+  "updatedAt": "2024-01-15T10:30:00Z"
 }
 ```
 
 #### Get Import Job Status
 
-```http
-GET /v1/imports/{jobId}
-X-API-Key: your-api-key
+**GET** `/v1/imports/:id`
+
+```bash
+curl http://localhost:3000/v1/imports/550e8400-e29b-41d4-a716-446655440000 \
+  -H "X-API-Key: your-key"
 ```
 
 **Response:**
-
 ```json
 {
   "id": "550e8400-e29b-41d4-a716-446655440000",
@@ -246,8 +248,8 @@ X-API-Key: your-api-key
   "totalRows": 10000,
   "processedRows": 10000,
   "successfulRows": 9850,
-  "failedRows": 150,
-  "skippedRows": 0,
+  "failedRows": 100,
+  "skippedRows": 50,
   "progressPercentage": 100,
   "errors": [
     {
@@ -258,14 +260,14 @@ X-API-Key: your-api-key
     }
   ],
   "metrics": {
-    "rowsPerSecond": 5000,
-    "errorRate": 0.015,
-    "durationMs": 2000
+    "rowsPerSecond": 2500,
+    "errorRate": 0.01,
+    "durationMs": 4000
   },
-  "startedAt": "2024-01-15T10:30:01.000Z",
-  "completedAt": "2024-01-15T10:30:03.000Z",
-  "createdAt": "2024-01-15T10:30:00.000Z",
-  "updatedAt": "2024-01-15T10:30:03.000Z"
+  "startedAt": "2024-01-15T10:30:01Z",
+  "completedAt": "2024-01-15T10:30:05Z",
+  "createdAt": "2024-01-15T10:30:00Z",
+  "updatedAt": "2024-01-15T10:30:05Z"
 }
 ```
 
@@ -273,74 +275,69 @@ X-API-Key: your-api-key
 
 #### Stream Export (Direct Download)
 
-```http
-GET /v1/exports?resource=articles&format=ndjson
-X-API-Key: your-api-key
-```
+**GET** `/v1/exports?resource=users&format=ndjson`
 
-**Response:** Streamed NDJSON data
+```bash
+curl "http://localhost:3000/v1/exports?resource=users&format=csv" \
+  -H "X-API-Key: your-key" \
+  -o users.csv
+```
 
 #### Create Async Export Job
 
-```http
-POST /v1/exports
-Content-Type: application/json
-X-API-Key: your-api-key
+**POST** `/v1/exports`
 
-{
-  "resourceType": "articles",
-  "format": "ndjson",
-  "filters": {
-    "status": "published",
-    "createdAfter": "2024-01-01T00:00:00Z"
-  },
-  "fields": ["id", "slug", "title", "author_id"]
-}
+```bash
+curl -X POST http://localhost:3000/v1/exports \
+  -H "X-API-Key: your-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "resourceType": "articles",
+    "format": "ndjson",
+    "filters": {
+      "status": "published",
+      "createdAfter": "2024-01-01"
+    }
+  }'
 ```
 
-**Response (202 Accepted):**
-
+**Response:**
 ```json
 {
-  "id": "550e8400-e29b-41d4-a716-446655440001",
+  "id": "660e8400-e29b-41d4-a716-446655440001",
   "resourceType": "articles",
   "format": "ndjson",
   "status": "pending",
   "totalRows": 0,
   "exportedRows": 0,
-  "createdAt": "2024-01-15T10:35:00.000Z",
-  "updatedAt": "2024-01-15T10:35:00.000Z"
+  "createdAt": "2024-01-15T10:30:00Z",
+  "updatedAt": "2024-01-15T10:30:00Z"
 }
 ```
 
 #### Get Export Job Status
 
-```http
-GET /v1/exports/{jobId}
-X-API-Key: your-api-key
-```
-
-**Response (when completed):**
+**GET** `/v1/exports/:id`
 
 ```json
 {
-  "id": "550e8400-e29b-41d4-a716-446655440001",
+  "id": "660e8400-e29b-41d4-a716-446655440001",
   "resourceType": "articles",
   "format": "ndjson",
   "status": "completed",
   "totalRows": 5000,
   "exportedRows": 5000,
   "progressPercentage": 100,
-  "downloadUrl": "https://...",
-  "fileSize": 1250000,
+  "downloadUrl": "https://s3.amazonaws.com/...",
+  "fileSize": 2500000,
   "metrics": {
-    "rowsPerSecond": 5000,
-    "totalBytes": 1250000,
-    "durationMs": 1000
+    "rowsPerSecond": 6000,
+    "totalBytes": 2500000,
+    "durationMs": 833
   },
-  "expiresAt": "2024-01-16T10:35:02.000Z",
-  "startedAt": "2024-01-15T10:35:01.000Z",
-  "completedAt": "2024-01-15T10:35:02.000Z"
+  "expiresAt": "2024-01-16T10:30:05Z",
+  "startedAt": "2024-01-15T10:30:01Z",
+  "completedAt": "2024-01-15T10:30:02Z"
 }
 ```
 
@@ -348,77 +345,74 @@ X-API-Key: your-api-key
 
 ### Users
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | UUID | Unique identifier (auto-generated if not provided) |
-| `email` | string | Email address (unique, required) |
-| `name` | string | User's full name (required) |
-| `role` | enum | One of: `admin`, `manager`, `author`, `editor`, `reader` |
-| `active` | boolean | Whether the user is active |
-| `created_at` | timestamp | Creation timestamp |
-| `updated_at` | timestamp | Last update timestamp |
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | UUID | No | Auto-generated if not provided |
+| `email` | string | Yes | Unique email address |
+| `name` | string | Yes | User's full name |
+| `role` | enum | Yes | `admin`, `manager`, `author`, `editor`, `reader` |
+| `active` | boolean | No | Default: `true` |
 
 ### Articles
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | UUID | Unique identifier (auto-generated if not provided) |
-| `slug` | string | URL-friendly identifier (unique, kebab-case, required) |
-| `title` | string | Article title (required) |
-| `body` | text | Article content (required) |
-| `author_id` | UUID | Reference to user (required, must exist) |
-| `tags` | array | Array of tag strings |
-| `status` | enum | One of: `draft`, `published`, `archived` |
-| `published_at` | timestamp | Publication date (only for published articles) |
-| `created_at` | timestamp | Creation timestamp |
-| `updated_at` | timestamp | Last update timestamp |
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | UUID | No | Auto-generated if not provided |
+| `slug` | string | Yes | Unique, kebab-case URL slug |
+| `title` | string | Yes | Article title |
+| `body` | string | Yes | Article content (10-50,000 words) |
+| `author_id` | UUID | Yes | Must reference existing user |
+| `tags` | string[] | No | Array of tags |
+| `status` | enum | Yes | `draft`, `published`, `archived` |
+| `published_at` | ISO date | No | Required if status is `published` |
 
 ### Comments
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | UUID | Unique identifier (auto-generated if not provided) |
-| `article_id` | UUID | Reference to article (required, must exist) |
-| `user_id` | UUID | Reference to user (required, must exist) |
-| `body` | text | Comment content (required, max 500 words, max 10,000 characters) |
-| `created_at` | timestamp | Creation timestamp |
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | UUID | No | Auto-generated if not provided |
+| `article_id` | UUID | Yes | Must reference existing article |
+| `user_id` | UUID | Yes | Must reference existing user |
+| `body` | string | Yes | Comment text (max 10,000 chars) |
 
 ## ✅ Validation Rules
 
 ### Users
-- **email**: Must be valid email format and unique
-- **role**: Must be one of: `admin`, `manager`, `author`, `editor`, `reader`
-- **active**: Must be a boolean value
-- **Duplicates**: Matched by `email` - existing users are updated
+- Email must be valid format and unique
+- Name is required
+- Role must be one of: `admin`, `manager`, `author`, `editor`, `reader`
 
 ### Articles
-- **author_id**: Must reference any existing user
-- **slug**: Must be unique and in kebab-case format (e.g., `my-article-title`)
-- **status=draft**: Must NOT have a `published_at` date
-- **status=published**: Should have a `published_at` date
-- **Duplicates**: Matched by `slug` - existing articles are updated
+- Slug must be kebab-case and unique
+- Body must be 10-50,000 words
+- `author_id` must reference an existing user
+- Draft articles cannot have `published_at`
+- Published articles must have `published_at`
 
 ### Comments
-- **article_id**: Must reference an existing article
-- **user_id**: Must reference any existing user
-- **body**: Required, must not exceed 500 words or 10,000 characters
-- **Duplicates**: Matched by `id` - existing comments are updated
+- `article_id` must reference an existing article
+- `user_id` must reference an existing user
+- Body max 10,000 characters
 
 ### Duplicate Handling (Upsert)
 
-Importing the same file twice will **NOT create duplicates**:
-
-| Resource | Unique Key | Behavior |
-|----------|------------|----------|
-| Users | `email` | Update existing user |
-| Articles | `slug` | Update existing article |
-| Comments | `id` | Update existing comment |
+The system uses upsert logic based on unique fields:
+- **Users**: Matched by `email` - existing users are updated
+- **Articles**: Matched by `slug` - existing articles are updated
+- **Comments**: Matched by `id` - existing comments are updated
 
 ### Error Reporting
 
-Errors are truncated for readability:
-- Long field values (>100 chars) are truncated with `...`
-- Up to 100 errors stored per job
+Validation errors are collected per row (up to 100 errors stored):
+
+```json
+{
+  "errors": [
+    { "row": 1, "field": "email", "message": "Invalid email format", "value": "bad-email" },
+    { "row": 5, "field": "role", "message": "Invalid role", "value": "superuser" }
+  ]
+}
+```
 
 ## 💡 Usage Examples
 
@@ -426,22 +420,21 @@ Errors are truncated for readability:
 
 ```bash
 curl -X POST http://localhost:3000/v1/imports \
-  -H "X-API-Key: your-api-key" \
-  -H "Idempotency-Key: import-users-$(date +%Y%m%d)" \
-  -F "resourceType=users" \
-  -F "file=@users.csv"
+  -H "X-API-Key: your-key" \
+  -H "Idempotency-Key: import-users-2024-01-15" \
+  -F "file=@users.csv" \
+  -F "resourceType=users"
 ```
 
 ### Import Articles from NDJSON URL
 
 ```bash
 curl -X POST http://localhost:3000/v1/imports \
+  -H "X-API-Key: your-key" \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: your-api-key" \
-  -H "Idempotency-Key: import-articles-$(date +%Y%m%d)" \
   -d '{
     "resourceType": "articles",
-    "fileUrl": "https://example.com/data/articles.ndjson",
+    "fileUrl": "https://example.com/articles.ndjson",
     "format": "ndjson"
   }'
 ```
@@ -449,62 +442,55 @@ curl -X POST http://localhost:3000/v1/imports \
 ### Check Import Status
 
 ```bash
-curl -H "X-API-Key: your-api-key" \
-  http://localhost:3000/v1/imports/550e8400-e29b-41d4-a716-446655440000
+curl http://localhost:3000/v1/imports/550e8400-e29b-41d4-a716-446655440000 \
+  -H "X-API-Key: your-key"
 ```
 
 ### Stream Export
 
 ```bash
-# Stream articles to file
-curl -H "X-API-Key: your-api-key" \
-  "http://localhost:3000/v1/exports?resource=articles&format=ndjson" \
-  -o articles_export.ndjson
+# Export as CSV
+curl "http://localhost:3000/v1/exports?resource=users&format=csv" \
+  -H "X-API-Key: your-key" -o users.csv
 
-# Stream users as CSV
-curl -H "X-API-Key: your-api-key" \
-  "http://localhost:3000/v1/exports?resource=users&format=csv" \
-  -o users_export.csv
+# Export as NDJSON with filters
+curl "http://localhost:3000/v1/exports?resource=articles&format=ndjson&status=published" \
+  -H "X-API-Key: your-key" -o articles.ndjson
 ```
 
 ### Create Async Export with Filters
 
 ```bash
 curl -X POST http://localhost:3000/v1/exports \
+  -H "X-API-Key: your-key" \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: your-api-key" \
   -d '{
     "resourceType": "articles",
-    "format": "ndjson",
+    "format": "json",
     "filters": {
       "status": "published",
-      "createdAfter": "2024-01-01T00:00:00Z"
+      "createdAfter": "2024-01-01",
+      "authorId": "user-uuid-here"
     },
-    "fields": ["id", "slug", "title", "published_at"]
+    "fields": ["id", "slug", "title", "status"]
   }'
 ```
 
 ### Sample NDJSON User Data
 
-```json
-{"email":"user1@example.com","name":"John Doe","role":"admin","active":true}
-{"email":"user2@example.com","name":"Jane Smith","role":"editor","active":true}
-{"email":"user3@example.com","name":"Bob Wilson","role":"reader","active":false}
-```
-
-### Sample NDJSON Article Data
-
-```json
-{"slug":"hello-world","title":"Hello World","body":"Welcome to our blog!","author_id":"550e8400-e29b-41d4-a716-446655440000","tags":["intro","welcome"],"status":"published","published_at":"2024-01-15T10:00:00Z"}
-{"slug":"draft-post","title":"Draft Post","body":"Work in progress...","author_id":"550e8400-e29b-41d4-a716-446655440000","tags":["draft"],"status":"draft"}
+```ndjson
+{"email":"john@example.com","name":"John Doe","role":"admin","active":true}
+{"email":"jane@example.com","name":"Jane Smith","role":"editor","active":true}
+{"email":"bob@example.com","name":"Bob Wilson","role":"reader","active":false}
 ```
 
 ### Sample CSV User Data
 
 ```csv
-id,email,name,role,active,created_at,updated_at
-,user1@example.com,John Doe,admin,true,2024-01-01T00:00:00Z,2024-01-01T00:00:00Z
-,user2@example.com,Jane Smith,editor,true,2024-01-01T00:01:00Z,2024-01-01T00:01:00Z
+email,name,role,active
+john@example.com,John Doe,admin,true
+jane@example.com,Jane Smith,editor,true
+bob@example.com,Bob Wilson,reader,false
 ```
 
 ## 🧪 Testing
@@ -515,21 +501,102 @@ id,email,name,role,active,created_at,updated_at
 npm run test
 ```
 
+### Run Unit Tests with Watch Mode
+
+```bash
+npm run test:watch
+```
+
 ### Run Tests with Coverage
 
 ```bash
 npm run test:cov
 ```
 
-### Run E2E Tests
+### Run E2E / Integration Tests
 
 ```bash
-# Ensure Docker services are running
-docker-compose up -d postgres redis localstack
-
-# Run e2e tests
+# Run all E2E tests
 npm run test:e2e
+
+# Run with verbose output
+npm run test:e2e -- --verbose
+
+# Run specific test file
+npx jest --config ./test/jest-e2e.json integration.e2e-spec.ts
+npx jest --config ./test/jest-e2e.json testdata.e2e-spec.ts
 ```
+
+### Run All Tests
+
+```bash
+npm test && npm run test:e2e
+```
+
+### Test Summary
+
+| Test Suite | Description |
+|------------|-------------|
+| `validation.utils.spec.ts` | Validation utility functions |
+| `imports.service.spec.ts` | Import service unit tests |
+| `integration.e2e-spec.ts` | Database integration tests |
+| `testdata.e2e-spec.ts` | Test data validation tests |
+
+## 🔄 Multi-Node Scalability
+
+This application is designed to run safely across multiple nodes/instances.
+
+### Features
+
+1. **Distributed Locking (Redis)**
+   - Prevents multiple nodes from processing the same job
+   - Uses Redis `SET NX PX` for atomic lock acquisition
+   - Auto-renews locks during long operations
+
+2. **Atomic Status Transitions**
+   - Database-level row locking (`SELECT ... FOR UPDATE`)
+   - Optimistic locking via version column
+   - Prevents race conditions on job state changes
+
+3. **Stale Job Cleanup**
+   - Scheduled task runs every 5 minutes
+   - Detects jobs stuck in `PROCESSING` state
+   - Recovers from crashed node scenarios
+
+### Configuration
+
+```bash
+# Stale job thresholds (in milliseconds)
+JOB_STALE_THRESHOLD_MS=1800000      # 30 minutes - when to consider a job stale
+JOB_STALE_LOCK_THRESHOLD_MS=600000  # 10 minutes - when to consider a lock stale
+JOB_RESTART_STALE_JOBS=false        # Whether to restart stale jobs or mark as failed
+```
+
+### How It Works
+
+```
+Node A                          Node B                          Redis
+  |                               |                               |
+  |-- Acquire lock "job:123" ---------------------------> [SET NX]
+  |<---- Lock acquired -----------|                               |
+  |                               |                               |
+  |                               |-- Acquire lock "job:123" ---> [SET NX]
+  |                               |<---- FAILED (key exists) -----|
+  |                               |                               |
+  |-- Process job                 |-- Skip (already locked)       |
+  |-- Update DB (PROCESSING)      |                               |
+  |                               |                               |
+  |-- Complete job                |                               |
+  |-- Update DB (COMPLETED)       |                               |
+  |-- Release lock ---------------------------------------> [DEL]
+```
+
+### Database Columns for Locking
+
+Jobs have the following columns for distributed coordination:
+- `version` - Optimistic locking counter
+- `locked_by` - Node ID that holds the lock
+- `locked_at` - Timestamp when lock was acquired
 
 ## ⚡ Performance
 
@@ -550,9 +617,9 @@ npm run test:e2e
 3. **Use filters** in exports to reduce data volume
 4. **Monitor Redis memory** for large job queues
 5. **Scale workers** by adjusting `JOB_CONCURRENCY`
+6. **Run multiple nodes** for horizontal scaling
 
-
-### Logs
+### Monitoring
 
 ```bash
 # View application logs
@@ -560,6 +627,9 @@ docker-compose logs -f app
 
 # View all service logs
 docker-compose logs -f
+
+# Monitor job queues
+# Open http://localhost:3000/admin/queues
 ```
 
 ## 📁 Project Structure
@@ -571,6 +641,9 @@ src/
 │   ├── filters/            # Exception filters
 │   ├── guards/             # Authentication guards
 │   ├── interceptors/       # Request interceptors
+│   ├── services/           # Shared services
+│   │   ├── distributed-lock.service.ts    # Redis distributed locking
+│   │   └── stale-job-cleanup.service.ts   # Stale job recovery
 │   └── utils/              # Utility functions
 ├── config/                 # Configuration
 ├── database/
@@ -589,9 +662,22 @@ src/
 ├── storage/                # S3 storage service
 ├── app.module.ts           # Root module
 └── main.ts                 # Application entry point
+
+test/
+├── testdata/               # Test data files (CSV, NDJSON)
+├── integration.e2e-spec.ts # Database integration tests
+├── testdata.e2e-spec.ts    # Test data validation tests
+├── setup.ts                # Test setup utilities
+└── jest-e2e.json           # E2E test configuration
+
+scripts/
+├── init-db.sql             # Database initialization
+├── init-localstack.sh      # LocalStack/S3 initialization
+├── pgadmin-servers.json    # pgAdmin auto-configuration
+└── pgadmin-pgpass          # pgAdmin password file
 ```
 
-## 🛠 Development
+## 🛠️ Development
 
 ### Available Scripts
 
@@ -602,14 +688,33 @@ src/
 | `npm run build` | Build for production |
 | `npm run start:prod` | Start production build |
 | `npm run test` | Run unit tests |
-| `npm run test:e2e` | Run e2e tests |
+| `npm run test:watch` | Run unit tests in watch mode |
+| `npm run test:e2e` | Run E2E/integration tests |
 | `npm run test:cov` | Run tests with coverage |
-| `npm run lint` | Lint code |
+| `npm run lint` | Lint and fix code |
 | `npm run format` | Format code with Prettier |
 | `npm run migration:generate` | Generate new migration |
 | `npm run migration:run` | Run database migrations |
 | `npm run migration:revert` | Revert last migration |
 
+### Docker Commands
+
+```bash
+# Start all services
+docker-compose up -d
+
+# Start with debug tools (Redis Commander)
+docker-compose --profile debug up -d
+
+# View logs
+docker-compose logs -f app
+
+# Stop all services
+docker-compose down
+
+# Stop and remove volumes
+docker-compose down -v
+```
 
 ## 📄 License
 
