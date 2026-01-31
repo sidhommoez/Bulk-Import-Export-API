@@ -1,0 +1,210 @@
+services:
+  # NestJS Application
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bulk-import-export-app
+    ports:
+      - '3000:3000'
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - API_PREFIX=v1
+      - DATABASE_HOST=postgres
+      - DATABASE_PORT=5432
+      - DATABASE_USERNAME=postgres
+      - DATABASE_PASSWORD=postgres
+      - DATABASE_NAME=bulk_import_export
+      - DATABASE_SYNCHRONIZE=false
+      - DATABASE_LOGGING=true
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - AWS_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_S3_BUCKET=bulk-import-export
+      - AWS_S3_ENDPOINT=http://localstack:4566
+      - AWS_S3_FORCE_PATH_STYLE=true
+      - JOB_BATCH_SIZE=1000
+      - JOB_CONCURRENCY=2
+      - LOG_LEVEL=info
+      - SWAGGER_ENABLED=true
+      - API_KEY=key1-secret,key2-secret,key3-secret
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+    networks:
+      - bulk-import-export-network
+    restart: unless-stopped
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: bulk-import-export-postgres
+    ports:
+      - '5432:5432'
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=bulk_import_export
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d bulk_import_export']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - bulk-import-export-network
+    restart: unless-stopped
+
+  # Redis for BullMQ Queue
+  redis:
+    image: redis:7-alpine
+    container_name: bulk-import-export-redis
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy noeviction
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - bulk-import-export-network
+    restart: unless-stopped
+
+  # LocalStack for S3
+  localstack:
+    image: localstack/localstack:3.0
+    container_name: bulk-import-export-localstack
+    ports:
+      - '4566:4566'
+      - '4510-4559:4510-4559'
+    environment:
+      - SERVICES=s3
+      - DEBUG=1
+      - DATA_DIR=/var/lib/localstack/data
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - AWS_DEFAULT_REGION=us-east-1
+    volumes:
+      - localstack-data:/var/lib/localstack
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./scripts/init-localstack.sh:/etc/localstack/init/ready.d/init-localstack.sh:ro
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:4566/_localstack/health']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    networks:
+      - bulk-import-export-network
+    restart: unless-stopped
+
+  # Redis Commander - Web UI for Redis (optional, for debugging)
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: bulk-import-export-redis-commander
+    ports:
+      - '8081:8081'
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+    depends_on:
+      - redis
+    networks:
+      - bulk-import-export-network
+    restart: unless-stopped
+    profiles:
+      - debug
+
+  # S3 Browser - Web UI for LocalStack S3
+  s3-browser:
+    image: zenko/cloudserver:latest
+    container_name: bulk-import-export-s3-browser
+    ports:
+      - '8000:8000'
+    environment:
+      - SCALITY_ACCESS_KEY_ID=test
+      - SCALITY_SECRET_ACCESS_KEY=test
+      - S3BACKEND=mem
+      - ENDPOINT=http://localstack:4566
+    depends_on:
+      - localstack
+    networks:
+      - bulk-import-export-network
+    restart: unless-stopped
+    profiles:
+      - debug
+
+  # S3 Browser - Web UI for LocalStack S3
+  # Access at http://localhost:8080
+  s3-manager:
+    image: cloudlena/s3manager:latest
+    container_name: bulk-import-export-s3-manager
+    ports:
+      - '8080:8080'
+    environment:
+      - ENDPOINT=localstack:4566
+      - ACCESS_KEY_ID=test
+      - SECRET_ACCESS_KEY=test
+      - USE_SSL=false
+    depends_on:
+      - localstack
+    networks:
+      - bulk-import-export-network
+    restart: unless-stopped
+
+  # pgAdmin - Web UI for PostgreSQL
+  # Access at http://localhost:5050 (login: admin@admin.com / admin)
+  # PostgreSQL connection is pre-configured automatically
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: bulk-import-export-pgadmin
+    ports:
+      - '5050:80'
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@admin.com
+      - PGADMIN_DEFAULT_PASSWORD=admin
+      - PGADMIN_CONFIG_SERVER_MODE=False
+      - PGADMIN_SERVER_JSON_FILE=/pgadmin4/servers.json
+    volumes:
+      - pgadmin-data:/var/lib/pgadmin
+      - ./scripts/pgadmin-servers.json:/pgadmin4/servers.json:ro
+      - ./scripts/pgadmin-pgpass:/pgpass:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - bulk-import-export-network
+    restart: unless-stopped
+    user: root
+    entrypoint: >
+      /bin/sh -c "
+      chmod 600 /pgpass;
+      chown pgadmin:pgadmin /pgpass;
+      /entrypoint.sh
+      "
+
+volumes:
+  postgres-data:
+    driver: local
+  redis-data:
+    driver: local
+  localstack-data:
+    driver: local
+  pgadmin-data:
+    driver: local
+
+networks:
+  bulk-import-export-network:
+    driver: bridge

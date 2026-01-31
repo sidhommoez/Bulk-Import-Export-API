@@ -1,0 +1,16 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "Bulk Import Export DB",
+      "Group": "Docker",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "bulk_import_export",
+      "Username": "postgres",
+      "Password": "postgres",
+      "SSLMode": "prefer",
+      "PassFile": "/pgpass",
+      "Comment": "Bulk Import/Export API PostgreSQL Database"
+    }
+  }
+}
